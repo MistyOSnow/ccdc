@@ -1,0 +1,2042 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>服务器资源分配看板</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;
+  --border:rgba(255,255,255,0.06);--border2:rgba(255,255,255,0.12);
+  --text:#e6edf3;--text2:#7d8590;--text3:#3d444d;
+  --blue:#58a6ff;--blue-bg:rgba(88,166,255,0.1);
+  --teal:#39d353;--teal2:#3fb950;--teal-bg:rgba(63,185,80,0.1);
+  --amber:#e3b341;--amber-bg:rgba(227,179,65,0.1);
+  --red:#f85149;--red-bg:rgba(248,81,73,0.1);
+  --purple:#bc8cff;--purple-bg:rgba(188,140,255,0.1);
+  --cyan:#79c0ff;--cyan-bg:rgba(121,192,255,0.1);
+  --r:8px;--rl:12px;
+  --font:'SF Pro Text','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;
+}
+[data-theme="light"]{
+  --bg:#f6f8fa;--bg2:#ffffff;--bg3:#f0f2f5;--bg4:#e1e4e8;
+  --border:rgba(0,0,0,0.08);--border2:rgba(0,0,0,0.14);
+  --text:#1f2328;--text2:#656d76;--text3:#6e7781;
+  --blue:#0969da;--blue-bg:rgba(9,105,218,0.08);
+  --teal:#1a7f37;--teal2:#1a7f37;--teal-bg:rgba(26,127,55,0.08);
+  --amber:#9a6700;--amber-bg:rgba(154,103,0,0.08);
+  --red:#cf222e;--red-bg:rgba(207,34,46,0.08);
+  --purple:#8250df;--purple-bg:rgba(130,80,223,0.08);
+  --cyan:#0550ae;--cyan-bg:rgba(5,80,174,0.08);
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:13px;line-height:1.5;overflow-x:hidden}
+
+/* ── topbar ── */
+.topbar{display:flex;align-items:center;height:52px;padding:0 24px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;gap:0;flex-wrap:nowrap;overflow-x:auto}
+.logo{font-size:14px;font-weight:600;letter-spacing:.04em;color:var(--text);margin-right:32px;white-space:nowrap;flex-shrink:0}
+.logo em{font-style:normal;color:var(--blue)}
+.nav{display:flex;gap:1px}
+.nav-btn{padding:6px 16px;border-radius:6px;border:none;background:transparent;color:var(--text2);font-size:13px;font-family:var(--font);cursor:pointer;transition:background .15s,color .15s;white-space:nowrap}
+.nav-btn:hover{background:var(--bg3);color:var(--text)}
+.nav-btn.active{background:var(--blue-bg);color:var(--blue);font-weight:500}
+.topbar-r{margin-left:auto;display:flex;align-items:center;gap:10px}
+.refresh-btn{padding:5px 12px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:12px;font-family:var(--font);cursor:pointer;transition:all .15s}
+.refresh-btn:hover{background:var(--bg3);color:var(--text)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--teal2);box-shadow:0 0 5px var(--teal2)}
+.dot.err{background:var(--red);box-shadow:0 0 5px var(--red)}
+.status-txt{font-size:11px;color:var(--text2)}
+
+/* ── main ── */
+.main{padding:20px 24px;overflow-y:auto}
+.page{display:none}.page.active{display:block}
+
+/* ── loading ── */
+.loading{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:200;transition:opacity .25s}
+.loading.hide{opacity:0;pointer-events:none}
+.spinner{width:32px;height:32px;border:2px solid var(--border2);border-top-color:var(--blue);border-radius:50%;animation:spin .65s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-txt{font-size:12px;color:var(--text2)}
+
+/* ── error ── */
+.err-bar{background:var(--red-bg);border:1px solid rgba(248,81,73,.25);border-radius:var(--r);padding:10px 14px;color:var(--red);font-size:12px;margin-bottom:16px;display:none}
+.err-bar.show{display:block}
+
+/* ── metric cards ── */
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.mc{background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:16px 18px;position:relative;overflow:hidden}
+.mc::after{content:'';position:absolute;top:0;left:0;right:0;height:1.5px;border-radius:1px 1px 0 0}
+.mc.blue::after{background:var(--blue)}.mc.teal::after{background:var(--teal2)}
+.mc.amber::after{background:var(--amber)}.mc.purple::after{background:var(--purple)}
+.mc-label{font-size:11px;color:var(--text2);margin-bottom:5px;letter-spacing:.03em}
+.mc-val{font-size:26px;font-weight:700;line-height:1.1;margin-bottom:4px}
+.mc.blue .mc-val{color:var(--blue)}.mc.teal .mc-val{color:var(--teal2)}
+.mc.amber .mc-val{color:var(--amber)}.mc.purple .mc-val{color:var(--purple)}
+.mc-sub{font-size:11px;color:var(--text3)}
+
+/* ── cards ── */
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:18px 20px}
+.card-title{font-size:11px;color:var(--text2);letter-spacing:.05em;text-transform:uppercase;margin-bottom:14px}
+
+/* ── donut grid ── */
+.donut-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.donut-inner{display:flex;flex-direction:column;align-items:center}
+.donut-canvas-wrap{position:relative;width:152px;height:152px;margin:0 auto 12px}
+.donut-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.donut-pct{font-size:20px;font-weight:700}
+.donut-lbl{font-size:10px;color:var(--text2);margin-top:1px}
+.donut-stats{display:flex;gap:16px;font-size:11px;color:var(--text2);justify-content:center}
+.donut-stats b{color:var(--text);font-weight:600}
+
+/* ── bar chart card ── */
+.bar-card{margin-bottom:18px}
+
+/* ── filter row ── */
+.filter-row{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.fb{padding:4px 12px;border-radius:20px;border:1px solid var(--border2);background:transparent;color:var(--text2);font-size:12px;font-family:var(--font);cursor:pointer;transition:all .15s}
+.fb:hover{background:var(--bg3);color:var(--text)}
+.fb.active{background:var(--blue-bg);color:var(--blue);border-color:rgba(88,166,255,.3)}
+.fsearch{margin-left:auto;padding:5px 11px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:12px;font-family:var(--font);outline:none;width:170px;max-width:40vw;min-width:80px;transition:border-color .15s}
+.fsearch:focus{border-color:var(--blue)}
+.fsearch::placeholder{color:var(--text3)}
+
+/* ── table ── */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{text-align:left;padding:9px 12px;color:var(--text2);font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody tr{border-bottom:1px solid var(--border);transition:background .1s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:var(--bg3)}
+tbody td{padding:10px 12px;color:var(--text);vertical-align:middle}
+td.muted{color:var(--text2)}
+td.mono{font-family:'SF Mono','Fira Code',monospace;font-size:11px;color:var(--blue)}
+
+/* badge */
+.badge{display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:500;white-space:nowrap}
+.b-blue  {background:var(--blue-bg);  color:var(--blue)}
+.b-teal  {background:var(--teal-bg);  color:var(--teal2)}
+.b-amber {background:var(--amber-bg); color:var(--amber)}
+.b-red   {background:var(--red-bg);   color:var(--red)}
+.b-purple{background:var(--purple-bg);color:var(--purple)}
+.b-cyan  {background:var(--cyan-bg);  color:var(--cyan)}
+.b-gray  {background:rgba(128,128,128,.1);color:var(--text2)}
+
+/* inline bar */
+.ibar{display:flex;align-items:center;gap:7px;min-width:110px}
+.ibar-track{flex:1;height:4px;border-radius:2px;background:var(--bg4);overflow:hidden}
+.ibar-fill{height:100%;border-radius:2px;transition:width .3s}
+.ibar-lbl{font-size:10px;color:var(--text2);min-width:52px;text-align:right;white-space:nowrap}
+
+/* tenant pills */
+.tpills{display:flex;flex-wrap:wrap;gap:4px}
+.tpill{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--bg4);color:var(--text2);border:1px solid var(--border);white-space:nowrap}
+.tpill.on{color:var(--teal2);border-color:rgba(63,185,80,.2);background:var(--teal-bg)}
+.tpill.pend{color:var(--amber);border-color:rgba(227,179,65,.2);background:var(--amber-bg)}
+
+/* responsive */
+@media(max-width:1100px){.metrics{grid-template-columns:repeat(2,1fr)}.donut-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:750px) {.metrics{grid-template-columns:1fr 1fr}.donut-grid{grid-template-columns:1fr}.topbar{padding:0 12px}.main{padding:14px 12px}}
+@media(max-width:520px) {.metrics{grid-template-columns:1fr}.nav-btn{padding:6px 10px;font-size:12px}}
+
+/* ── modal ── */
+.modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:300;opacity:0;pointer-events:none;transition:opacity .2s}
+[data-theme="light"] .modal-mask{background:rgba(0,0,0,.3)}
+.modal-mask.show{opacity:1;pointer-events:auto}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:var(--rl);width:560px;max-width:92vw;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.45);min-width:320px}
+[data-theme="light"] .modal{box-shadow:0 8px 30px rgba(0,0,0,.12)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-title{font-size:15px;font-weight:600;color:var(--text)}
+.modal-close{background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;padding:0 4px;line-height:1}
+.modal-close:hover{color:var(--text)}
+.modal-body{padding:20px;overflow-y:auto;flex:1}
+.modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--border)}
+.btn{padding:7px 18px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--text);font-size:13px;font-family:var(--font);cursor:pointer;transition:all .15s}
+.btn:hover{background:var(--bg3)}
+.btn-primary{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:500}
+.btn-primary:hover{opacity:.85;background:var(--blue)}
+[data-theme="light"] .btn-primary{color:#fff}
+.btn-danger{background:var(--red-bg);color:var(--red);border-color:rgba(248,81,73,.3)}
+.btn-danger:hover{background:rgba(248,81,73,.2)}
+.btn-sm{padding:3px 10px;font-size:11px;border-radius:5px}
+
+/* ── form ── */
+.form-group{margin-bottom:14px}
+.form-label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;letter-spacing:.02em}
+.form-input,.form-select{width:100%;padding:8px 11px;border-radius:6px;border:1px solid var(--border2);background:var(--bg3);color:var(--text);font-size:13px;font-family:var(--font);outline:none;transition:border-color .15s}
+.form-input:focus,.form-select:focus{border-color:var(--blue)}
+.form-select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%237d8590'%3E%3Cpath d='M2 4l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px;min-width:0}
+[data-theme="light"] .form-select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23656d76'%3E%3Cpath d='M2 4l4 4 4-4'/%3E%3C/svg%3E")}
+.form-row{display:flex;gap:12px;flex-wrap:wrap}
+.form-row .form-group{flex:1;min-width:120px}
+.form-hint{font-size:11px;color:var(--text3);margin-top:3px}
+.form-error{font-size:11px;color:var(--red);margin-top:3px;display:none}
+.form-error.show{display:block}
+
+/* ── alloc list in modal ── */
+.alloc-list{margin-top:8px}
+.alloc-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;margin-bottom:6px;font-size:12px;flex-wrap:wrap}
+.alloc-node{color:var(--blue);font-weight:500;min-width:56px}
+.alloc-info{color:var(--text2);flex:1}
+.alloc-info b{color:var(--text);font-weight:600}
+.alloc-actions{display:flex;gap:4px}
+.disk-item{display:flex;align-items:center;gap:10px;padding:6px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;margin-bottom:4px;font-size:12px;flex-wrap:wrap}
+.disk-info{color:var(--text2);flex:1}
+.disk-info b{color:var(--text);font-weight:600}
+
+/* ── viz tree ── */
+.viz-tree{margin-top:8px}
+.viz-comp{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);margin-bottom:10px;overflow:hidden}
+.viz-comp-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg3);cursor:default;gap:8px;flex-wrap:wrap}
+.viz-comp-name{font-weight:600;color:var(--blue);font-size:13px}
+.viz-comp-summary{font-size:11px;color:var(--text2)}
+.viz-comp-actions{display:flex;gap:4px}
+.viz-role-list{padding:6px 14px 10px}
+.viz-role{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:6px;margin-bottom:3px;font-size:12px;flex-wrap:wrap;transition:background .1s}
+.viz-role:hover{background:var(--bg3)}
+.viz-role-name{color:var(--purple);font-weight:500;min-width:80px;white-space:nowrap}
+.viz-role-seq{color:var(--text2);font-size:10px}
+.viz-role-node{color:var(--text);min-width:80px}
+.viz-role-res{color:var(--text2);flex:1}
+.viz-role-res b{color:var(--text);font-weight:600}
+.viz-role-actions{display:flex;gap:4px}
+
+.viz-node-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:10px}
+.viz-node-head{display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.viz-node-code{font-weight:600;color:var(--blue);font-size:13px}
+.viz-node-cap{font-size:11px;color:var(--text2)}
+.viz-node-bar{height:4px;border-radius:2px;background:var(--bg4);margin:6px 0 10px;overflow:hidden}
+.viz-node-bar-fill{height:100%;border-radius:2px;background:var(--blue);transition:width .3s}
+.viz-node-roles{padding-left:4px}
+
+.viz-empty{color:var(--text3);font-size:12px;padding:20px 0;text-align:center}
+</style>
+</head>
+<body>
+
+<div class="loading" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-txt">正在加载资源数据…</div>
+</div>
+
+<div class="topbar">
+  <div class="logo">资源<em>看板</em></div>
+  <nav class="nav">
+    <button class="nav-btn active" onclick="go('overview',this)">总览</button>
+    <button class="nav-btn" onclick="go('nodes',this)">服务器</button>
+    <button class="nav-btn" onclick="go('tenants',this)">租户</button>
+    <button class="nav-btn" onclick="go('templates',this)">模板</button>
+    <button class="nav-btn" onclick="go('viz',this)">可视面板</button>
+  </nav>
+  <div class="topbar-r">
+    <button class="refresh-btn" onclick="toggleTheme()" id="theme-btn" title="切换主题">☀️</button>
+    <button class="refresh-btn" onclick="reload()">刷新</button>
+    <div class="dot" id="dot"></div>
+    <span class="status-txt" id="stxt">加载中</span>
+  </div>
+</div>
+
+<!-- ── 租户新增/编辑弹窗 ── -->
+<div class="modal-mask" id="modal-tenant">
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title" id="mt-title">新增租户</span>
+      <button class="modal-close" onclick="closeModal('modal-tenant')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="mt-id">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">租户编码</label>
+          <input class="form-input" id="mt-code" placeholder="如 t29">
+          <div class="form-error" id="mt-code-err"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">租户名称</label>
+          <input class="form-input" id="mt-name" placeholder="如 第二档-XX局">
+          <div class="form-error" id="mt-name-err"></div>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">地区</label>
+          <input class="form-input" id="mt-region" placeholder="如 北京">
+        </div>
+        <div class="form-group">
+          <label class="form-label">档位</label>
+          <select class="form-select" id="mt-tier">
+            <option value="1">第一档</option>
+            <option value="2">第二档</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">状态</label>
+        <select class="form-select" id="mt-status">
+          <option value="active">已分配</option>
+          <option value="pending">待分配</option>
+          <option value="reserved">预留</option>
+          <option value="returned">申请退回</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-tenant')">取消</button>
+      <button class="btn btn-primary" onclick="saveTenant()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 资源分配弹窗 ── -->
+<div class="modal-mask" id="modal-alloc">
+  <div class="modal" style="width:min(680px,92vw)">
+    <div class="modal-head">
+      <span class="modal-title" id="ma-title">资源分配</span>
+      <button class="modal-close" onclick="closeModal('modal-alloc')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ma-tenant-id">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:13px;color:var(--text2)">租户：<b id="ma-tenant-name" style="color:var(--text)"></b></div>
+        <button class="btn btn-sm btn-primary" onclick="showAllocForm()">+ 新增分配</button>
+      </div>
+      <!-- new alloc form (hidden by default) -->
+      <div id="ma-form" style="display:none;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:14px;margin-bottom:14px">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">选择节点</label>
+            <select class="form-select" id="ma-node" onchange="onNodeSelect()"></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">CPU（核）</label>
+            <input class="form-input" id="ma-cpu" type="number" min="0" value="0">
+            <div class="form-hint" id="ma-cpu-hint"></div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">内存（GB）</label>
+            <input class="form-input" id="ma-mem" type="number" min="0" value="0">
+            <div class="form-hint" id="ma-mem-hint"></div>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:4px">
+          <button class="btn btn-sm" onclick="hideAllocForm()">取消</button>
+          <button class="btn btn-sm btn-primary" onclick="addAllocation()">确认分配</button>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;letter-spacing:.03em">CPU / 内存分配</div>
+      <div class="alloc-list" id="ma-cpu-list"></div>
+      <div style="font-size:12px;color:var(--text2);margin:16px 0 8px;letter-spacing:.03em">磁盘分配</div>
+      <div id="ma-disk-list"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-alloc')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 服务器磁盘管理弹窗 ── -->
+<div class="modal-mask" id="modal-disk">
+  <div class="modal" style="width:min(580px,92vw)">
+    <div class="modal-head">
+      <span class="modal-title" id="md-title">磁盘管理</span>
+      <button class="modal-close" onclick="closeModal('modal-disk')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="md-node-id">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:13px;color:var(--text2)">服务器：<b id="md-node-name" style="color:var(--text)"></b></div>
+        <button class="btn btn-sm btn-primary" onclick="showDiskForm()">+ 新增磁盘</button>
+      </div>
+      <!-- new disk form (hidden by default) -->
+      <div id="md-form" style="display:none;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:14px;margin-bottom:14px">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">磁盘名称</label>
+            <input class="form-input" id="md-dname" placeholder="如 disk5">
+          </div>
+          <div class="form-group">
+            <label class="form-label">容量（TB）</label>
+            <input class="form-input" id="md-dsize" type="number" min="1" value="10">
+          </div>
+          <div class="form-group">
+            <label class="form-label">状态</label>
+            <select class="form-select" id="md-dstatus">
+              <option value="normal">正常</option>
+              <option value="replace">待替换</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:4px">
+          <button class="btn btn-sm" onclick="hideDiskForm()">取消</button>
+          <button class="btn btn-sm btn-primary" onclick="addDisk()">确认</button>
+        </div>
+      </div>
+      <!-- batch resize bar -->
+      <div id="md-batch-bar" style="display:none;background:var(--bg3);border:1px solid var(--blue);border-radius:8px;padding:10px 14px;margin-bottom:14px;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--blue);font-weight:500">已选 <span id="md-batch-count">0</span> 块</span>
+        <input class="form-input" id="md-batch-size" type="number" min="1" placeholder="新容量" style="width:80px;padding:2px 8px;font-size:12px">
+        <span style="font-size:12px;color:var(--text3)">TB</span>
+        <button class="btn btn-sm btn-primary" onclick="batchResizeDisks()">批量修改大小</button>
+        <button class="btn btn-sm" onclick="cancelBatchResize()">取消</button>
+      </div>
+      <div id="md-list"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-danger" id="md-delete-btn" onclick="confirmDeleteNode()">删除服务器</button>
+      <div id="md-delete-confirm" style="display:none;align-items:center;gap:8px">
+        <span style="font-size:12px;color:var(--red)">确认删除？</span>
+        <button class="btn btn-sm btn-danger" onclick="doDeleteNode()">确认</button>
+        <button class="btn btn-sm" onclick="cancelDeleteNode()">取消</button>
+      </div>
+      <button class="btn" onclick="closeModal('modal-disk')" style="margin-left:auto">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 新增服务器弹窗 ── -->
+<div class="modal-mask" id="modal-node">
+  <div class="modal" style="width:min(520px,92vw)">
+    <div class="modal-head">
+      <span class="modal-title">新增服务器</span>
+      <button class="modal-close" onclick="closeModal('modal-node')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">节点编号</label>
+          <input class="form-input" id="mn-code" placeholder="如 A056">
+          <div class="form-error" id="mn-code-err"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">机器名</label>
+          <input class="form-input" id="mn-name" placeholder="如 test55">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">硬件配置</label>
+        <div style="display:flex;gap:8px">
+          <select class="form-select" id="mn-hw" style="flex:1"></select>
+          <button class="btn btn-sm" onclick="showHwForm()" style="white-space:nowrap">新增配置</button>
+        </div>
+      </div>
+      <!-- new hw config form (hidden) -->
+      <div id="mn-hw-form" style="display:none;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:14px;margin-top:8px;margin-bottom:12px">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">配置名称</label>
+            <input class="form-input" id="mn-hw-name" placeholder="如 配置八">
+          </div>
+          <div class="form-group">
+            <label class="form-label">CPU 核数</label>
+            <input class="form-input" id="mn-hw-cpu" type="number" min="1" value="32">
+          </div>
+          <div class="form-group">
+            <label class="form-label">内存 (GB)</label>
+            <input class="form-input" id="mn-hw-mem" type="number" min="1" value="256">
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:6px;margin-top:4px">
+          <button class="btn btn-sm" onclick="hideHwForm()">取消</button>
+          <button class="btn btn-sm btn-primary" onclick="addHwConfig()">确认</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">系列</label>
+          <select class="form-select" id="mn-series">
+            <option value="A">A 系列</option>
+            <option value="B">B 系列</option>
+            <option value="C">C 系列</option>
+            <option value="D">D 系列</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">状态</label>
+          <select class="form-select" id="mn-status">
+            <option value="active">运行中</option>
+            <option value="standby">待机</option>
+          </select>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">新增服务器将自动创建 4 块 10TB 磁盘（可在磁盘管理中调整）</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-node')">取消</button>
+      <button class="btn btn-primary" onclick="saveNode()">保存</button>
+    </div>
+  </div>
+</div>
+
+<main class="main">
+  <div class="err-bar" id="errBar"></div>
+
+  <!-- ══ 总览 ══ -->
+  <section class="page active" id="page-overview">
+    <div class="metrics">
+      <div class="mc blue">
+        <div class="mc-label">物理节点总数</div>
+        <div class="mc-val" id="m-nodes">—</div>
+        <div class="mc-sub" id="m-nodes-sub">—</div>
+      </div>
+      <div class="mc teal">
+        <div class="mc-label">CPU 总核数</div>
+        <div class="mc-val" id="m-cpu">—</div>
+        <div class="mc-sub" id="m-cpu-sub">—</div>
+      </div>
+      <div class="mc amber">
+        <div class="mc-label">内存总量</div>
+        <div class="mc-val" id="m-mem">—</div>
+        <div class="mc-sub" id="m-mem-sub">—</div>
+      </div>
+      <div class="mc purple">
+        <div class="mc-label">磁盘总容量</div>
+        <div class="mc-val" id="m-disk">—</div>
+        <div class="mc-sub" id="m-disk-sub">—</div>
+      </div>
+    </div>
+
+    <div class="donut-grid">
+      <div class="card">
+        <div class="card-title">CPU 分配率</div>
+        <div class="donut-inner">
+          <div class="donut-canvas-wrap">
+            <canvas id="dCPU" role="img" aria-label="CPU分配环形图"></canvas>
+            <div class="donut-center">
+              <div class="donut-pct" id="pct-cpu" style="color:var(--teal2)">—</div>
+              <div class="donut-lbl">已分配</div>
+            </div>
+          </div>
+          <div class="donut-stats">
+            <span>已分配 <b id="u-cpu">—</b> 核</span>
+            <span>剩余 <b id="f-cpu">—</b> 核</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">内存分配率</div>
+        <div class="donut-inner">
+          <div class="donut-canvas-wrap">
+            <canvas id="dMEM" role="img" aria-label="内存分配环形图"></canvas>
+            <div class="donut-center">
+              <div class="donut-pct" id="pct-mem" style="color:var(--amber)">—</div>
+              <div class="donut-lbl">已分配</div>
+            </div>
+          </div>
+          <div class="donut-stats">
+            <span>已分配 <b id="u-mem">—</b> GB</span>
+            <span>剩余 <b id="f-mem">—</b> GB</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">磁盘分配率</div>
+        <div class="donut-inner">
+          <div class="donut-canvas-wrap">
+            <canvas id="dDISK" role="img" aria-label="磁盘分配环形图"></canvas>
+            <div class="donut-center">
+              <div class="donut-pct" id="pct-disk" style="color:var(--blue)">—</div>
+              <div class="donut-lbl">已分配</div>
+            </div>
+          </div>
+          <div class="donut-stats">
+            <span>已分配 <b id="u-disk">—</b> TB</span>
+            <span>空闲 <b id="f-disk">—</b> TB</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card bar-card">
+      <div class="card-title">各系列 CPU 使用分布</div>
+      <div style="position:relative;height:200px">
+        <canvas id="barChart" role="img" aria-label="各系列CPU分配柱状图"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 服务器 ══ -->
+  <section class="page" id="page-nodes">
+    <div class="filter-row">
+      <button class="fb active" onclick="fnf('all',this)">全部</button>
+      <button class="fb" onclick="fnf('A',this)">A 系列</button>
+      <button class="fb" onclick="fnf('B',this)">B 系列</button>
+      <button class="fb" onclick="fnf('C',this)">C 系列</button>
+      <button class="fb" onclick="fnf('D',this)">D 系列</button>
+      <input class="fsearch" id="nsearch" type="text" placeholder="搜索节点 / 机器名…" oninput="rnodes()">
+      <button class="btn btn-sm btn-primary" onclick="openNewNode()" style="margin-left:6px">+ 新增服务器</button>
+    </div>
+    <div class="card">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>节点</th><th>机器名</th><th>配置</th>
+            <th>CPU 使用</th><th>内存使用</th><th>磁盘</th><th>已绑租户</th>
+          </tr></thead>
+          <tbody id="ntbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 租户 ══ -->
+  <section class="page" id="page-tenants">
+    <div class="filter-row">
+      <button class="fb active" onclick="ftf('all',this)">全部</button>
+      <button class="fb" onclick="ftf('1',this)">第一档</button>
+      <button class="fb" onclick="ftf('2',this)">第二档</button>
+      <button class="fb" onclick="ftf('active',this)">已分配</button>
+      <button class="fb" onclick="ftf('pending',this)">待分配</button>
+      <button class="fb" onclick="ftf('reserved',this)">预留/退回</button>
+      <input class="fsearch" id="tsearch" type="text" placeholder="搜索租户…" oninput="rtenants()">
+      <button class="btn btn-sm btn-primary" onclick="openNewTenant()" style="margin-left:6px">+ 新增租户</button>
+    </div>
+    <div class="card">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>租户名称</th><th>地区</th><th>档位</th><th>状态</th>
+            <th>CPU (核)</th><th>内存 (GB)</th><th>磁盘</th><th>操作</th>
+          </tr></thead>
+          <tbody id="ttbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 模板 ══ -->
+  <section class="page" id="page-templates">
+    <div class="filter-row">
+      <span style="font-size:12px;color:var(--text2)">定义组件类型和角色列表，分配时从模板选取</span>
+      <button class="btn btn-sm btn-primary" onclick="openNewTemplate()" style="margin-left:auto">+ 新增组件模板</button>
+    </div>
+    <div class="card">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>组件名称</th><th>说明</th><th>角色列表</th><th>操作</th>
+          </tr></thead>
+          <tbody id="tp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 可视面板 ══ -->
+  <section class="page" id="page-viz">
+    <div class="filter-row">
+      <button class="fb active" id="viz-tab-comp" onclick="switchVizTab('component')">组件视角</button>
+      <button class="fb" id="viz-tab-node" onclick="switchVizTab('node')">服务器视角</button>
+    </div>
+
+    <!-- 组件视角 -->
+    <div id="viz-component">
+      <div class="filter-row">
+        <select class="form-select" id="viz-tenant" style="width:220px;max-width:40vw" onchange="loadComponentView()">
+          <option value="">选择租户</option>
+        </select>
+        <button class="btn btn-sm btn-primary" onclick="openNewComponent()" style="margin-left:6px">+ 新增组件</button>
+      </div>
+      <div id="viz-comp-content"></div>
+    </div>
+
+    <!-- 服务器视角 -->
+    <div id="viz-node" style="display:none">
+      <div class="filter-row">
+        <select class="form-select" id="viz-node-sel" style="width:260px;max-width:40vw" onchange="loadNodeView()">
+          <option value="">选择服务器</option>
+        </select>
+      </div>
+      <div id="viz-node-content"></div>
+    </div>
+  </section>
+</main>
+
+<!-- ── 模板新增/编辑弹窗 ── -->
+<div class="modal-mask" id="modal-template">
+  <div class="modal" style="width:min(520px,92vw)">
+    <div class="modal-head">
+      <span class="modal-title" id="mtp-title">新增组件模板</span>
+      <button class="modal-close" onclick="closeModal('modal-template')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="mtp-id">
+      <div class="form-group">
+        <label class="form-label">组件名称</label>
+        <input class="form-input" id="mtp-name" placeholder="如 HDFS">
+      </div>
+      <div class="form-group">
+        <label class="form-label">说明</label>
+        <input class="form-input" id="mtp-desc" placeholder="如 Hadoop 分布式文件系统">
+      </div>
+      <div class="form-group">
+        <label class="form-label">角色列表（每行一个）</label>
+        <textarea class="form-input" id="mtp-roles" rows="5" placeholder="NameNode&#10;SNN&#10;DataNode" style="resize:vertical;font-family:var(--font);line-height:1.6"></textarea>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-template')">取消</button>
+      <button class="btn btn-primary" onclick="saveTemplate()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 新增租户组件弹窗 ── -->
+<div class="modal-mask" id="modal-comp">
+  <div class="modal" style="width:min(480px,92vw)">
+    <div class="modal-head">
+      <span class="modal-title">新增组件实例</span>
+      <button class="modal-close" onclick="closeModal('modal-comp')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="mc-tenant-id">
+      <div class="form-group">
+        <label class="form-label">选择模板（可选）</label>
+        <select class="form-select" id="mc-template" onchange="onTemplateSelect()">
+          <option value="">手动填写</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">组件名称</label>
+        <input class="form-input" id="mc-name" placeholder="如 HDFS">
+      </div>
+      <div class="form-group">
+        <label class="form-label">实例标识</label>
+        <input class="form-input" id="mc-label" placeholder="如 1、2、生产" value="1">
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-comp')">取消</button>
+      <button class="btn btn-primary" onclick="saveComponent()">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 新增角色分配弹窗 ── -->
+<div class="modal-mask" id="modal-role-alloc">
+  <div class="modal" style="width:min(520px,92vw)">
+    <div class="modal-head">
+      <span class="modal-title">新增角色分配</span>
+      <button class="modal-close" onclick="closeModal('modal-role-alloc')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="mra-tc-id">
+      <input type="hidden" id="mra-edit-id">
+      <div class="form-group">
+        <label class="form-label">角色名称</label>
+        <div style="display:flex;gap:8px">
+          <select class="form-select" id="mra-role-sel" onchange="onRoleSelect()" style="flex:1">
+            <option value="">选择角色</option>
+          </select>
+          <input class="form-input" id="mra-role-name" placeholder="或手动填写" style="flex:1">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">序号</label>
+          <input class="form-input" id="mra-seq" type="number" min="1" value="1">
+        </div>
+        <div class="form-group">
+          <label class="form-label">选择服务器</label>
+          <select class="form-select" id="mra-node" onchange="onRANodeSelect()"></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">CPU（核）</label>
+          <input class="form-input" id="mra-cpu" type="number" min="0" value="0">
+          <div class="form-hint" id="mra-cpu-hint"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">内存（GB）</label>
+          <input class="form-input" id="mra-mem" type="number" min="0" value="0">
+          <div class="form-hint" id="mra-mem-hint"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-role-alloc')">取消</button>
+      <button class="btn btn-primary" onclick="saveRoleAlloc()">确认</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── state ──────────────────────────────────────────────────
+let D = null, charts = {}, nfil = 'all', tfil = 'all';
+
+// ── theme ──────────────────────────────────────────────────
+(function(){
+  const saved = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  updateThemeBtn(saved);
+})();
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  updateThemeBtn(next);
+  if (D) r1();
+}
+function updateThemeBtn(t){
+  document.getElementById('theme-btn').textContent = t === 'light' ? '🌙' : '☀️';
+}
+
+// ── boot ──────────────────────────────────────────────────
+addEventListener('DOMContentLoaded', loadData);
+
+async function loadData() {
+  showLoad(true); hideErr();
+  try {
+    const r = await fetch('/api/dashboard');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    D = await r.json();
+    renderAll(); setStatus(true);
+  } catch(e) {
+    showErr('数据加载失败：' + e.message + '（请确认后端服务已启动）');
+    setStatus(false);
+  } finally { showLoad(false); }
+}
+
+function reload() { killCharts(); loadData(); }
+
+// ── page switch ───────────────────────────────────────────
+function go(name, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── render all ────────────────────────────────────────────
+function renderAll() { r1(); rnodes(); rtenants(); renderTemplates(); populateVizDropdowns(); }
+
+// ════════════════════════════════════════════════════════════
+// PAGE 1
+// ════════════════════════════════════════════════════════════
+function r1() {
+  const s = D.summary, nd = D.nodes;
+
+  // metric cards
+  setText('m-nodes', nd.length);
+  setText('m-nodes-sub',
+    ['A','B','C','D'].map(x => `${x}×${nd.filter(n=>n.series===x).length}`).join('　'));
+
+  setText('m-cpu', s.cpu.total.toLocaleString());
+  setText('m-cpu-sub', `已分配 ${s.cpu.used.toLocaleString()} 核`);
+
+  const memDisp = s.mem.total >= 1024
+    ? (s.mem.total/1024).toFixed(0) + ' TB' : s.mem.total + ' GB';
+  setText('m-mem', memDisp);
+  setText('m-mem-sub', `已分配 ${s.mem.used.toLocaleString()} GB`);
+
+  setText('m-disk', s.disk.total_tb + ' TB');
+  setText('m-disk-sub', `已分配 ${s.disk.used_tb} TB（${s.disk.used_disks}/${s.disk.total_disks} 块）`);
+
+  // donuts
+  const cp = pct(s.cpu.used,  s.cpu.total);
+  const mp = pct(s.mem.used,  s.mem.total);
+  const dp = pct(s.disk.used_tb, s.disk.total_tb);
+
+  setText('pct-cpu',  cp  + '%');
+  setText('pct-mem',  mp  + '%');
+  setText('pct-disk', dp  + '%');
+  setText('u-cpu',  s.cpu.used.toLocaleString());
+  setText('f-cpu',  (s.cpu.total - s.cpu.used).toLocaleString());
+  setText('u-mem',  s.mem.used.toLocaleString());
+  setText('f-mem',  (s.mem.total - s.mem.used).toLocaleString());
+  setText('u-disk', s.disk.used_tb);
+  setText('f-disk', s.disk.total_tb - s.disk.used_tb);
+
+  mkDonut('dCPU',  cp, '#3fb950');
+  mkDonut('dMEM',  mp, '#e3b341');
+  mkDonut('dDISK', dp, '#58a6ff');
+
+  // grouped bar
+  const ser = ['A','B','C','D'];
+  const sd  = ser.map(s => {
+    const ns = nd.filter(n => n.series === s);
+    return { total: ns.reduce((a,n)=>a+n.cpu_cores,0),
+             used:  ns.reduce((a,n)=>a+n.cpu_used, 0) };
+  });
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const barUnused = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.05)';
+  const barGrid = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)';
+  const barTick = isLight ? '#656d76' : '#7d8590';
+  if (charts.bar) charts.bar.destroy();
+  charts.bar = new Chart(document.getElementById('barChart'), {
+    type: 'bar',
+    data: {
+      labels: ser.map(s => s + ' 系列'),
+      datasets: [
+        { label:'已分配', data: sd.map(d=>d.used),
+          backgroundColor:'rgba(88,166,255,0.65)', borderRadius:4, borderSkipped:false },
+        { label:'未分配', data: sd.map(d=>d.total-d.used),
+          backgroundColor:barUnused, borderRadius:4, borderSkipped:false },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false},
+        tooltip:{ callbacks:{ label:c=>`${c.dataset.label}: ${c.raw.toLocaleString()} 核` } } },
+      scales:{
+        x:{ stacked:true, grid:{color:barGrid}, ticks:{color:barTick,font:{size:11}} },
+        y:{ stacked:true, grid:{color:barGrid},
+            ticks:{color:barTick,font:{size:10},callback:v=>v.toLocaleString()} }
+      }
+    }
+  });
+}
+
+function mkDonut(id, percent, color) {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const unusedColor = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)';
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), {
+    type:'doughnut',
+    data:{ datasets:[{ data:[percent, 100-percent],
+      backgroundColor:[color, unusedColor],
+      borderWidth:0, hoverOffset:3 }] },
+    options:{ responsive:true, maintainAspectRatio:true, cutout:'70%',
+      plugins:{legend:{display:false},tooltip:{enabled:false}},
+      animation:{animateRotate:true,duration:600} }
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+// PAGE 2 — 服务器
+// ════════════════════════════════════════════════════════════
+function fnf(f, btn) {
+  nfil = f;
+  document.querySelectorAll('#page-nodes .fb').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active'); rnodes();
+}
+
+function rnodes() {
+  if (!D) return;
+  const q = (document.getElementById('nsearch').value||'').toLowerCase();
+  const rows = D.nodes.filter(n => {
+    const mf = nfil === 'all' || n.series === nfil;
+    const ms = !q || n.node_code.toLowerCase().includes(q) || n.machine_name.toLowerCase().includes(q);
+    return mf && ms;
+  });
+  const tbody = document.getElementById('ntbody');
+  if (!rows.length) { tbody.innerHTML = emptyRow(7); return; }
+
+  const cfgBadge = { '配置二':'b-blue','配置三':'b-cyan','配置五':'b-amber','配置七':'b-gray' };
+
+  tbody.innerHTML = rows.map(n => {
+    const pills = (n.tenants||[]).map(t =>
+      `<span class="tpill ${t.status==='active'?'on':t.status==='pending'?'pend':''}" title="${esc(t.name)} CPU:${t.cpu}核 MEM:${t.mem}GB">${esc(t.name.replace(/第[一二]档-/,''))}</span>`
+    ).join('') || '<span style="color:var(--text3)">—</span>';
+
+    return `<tr>
+      <td class="mono">${esc(n.node_code)}</td>
+      <td><span style="color:var(--text);cursor:pointer;text-decoration:underline dotted var(--text2)" onclick="openDiskModal(${n.id},'${esc(n.node_code)}','${esc(n.machine_name||'')}')">${esc(n.machine_name||'—')}</span></td>
+      <td><span class="badge ${cfgBadge[n.config_name]||'b-gray'}">${esc(n.config_name)}</span></td>
+      <td>${n.cpu_used}/${n.cpu_cores} 核</td>
+      <td>${n.mem_used}/${n.memory_gb} GB</td>
+      <td>${n.used_disks}/${n.total_disks} 块 (${n.used_disk_tb}/${n.total_disk_tb} TB)</td>
+      <td><div class="tpills">${pills}</div></td>
+    </tr>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// PAGE 3 — 租户
+// ════════════════════════════════════════════════════════════
+function ftf(f, btn) {
+  tfil = f;
+  document.querySelectorAll('#page-tenants .fb').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active'); rtenants();
+}
+
+function rtenants() {
+  if (!D) return;
+  const q = (document.getElementById('tsearch').value||'').toLowerCase();
+  const rows = D.tenants.filter(t => {
+    if (tfil==='1') return t.tier===1;
+    if (tfil==='2') return t.tier===2;
+    if (tfil==='active')   return t.status==='active';
+    if (tfil==='pending')  return t.status==='pending';
+    if (tfil==='reserved') return t.status==='reserved'||t.status==='returned';
+    return true;
+  }).filter(t => !q || t.tenant_name.toLowerCase().includes(q) || (t.region||'').toLowerCase().includes(q));
+
+  const tbody = document.getElementById('ttbody');
+  if (!rows.length) { tbody.innerHTML = emptyRow(8); return; }
+
+  const smapBadge = { active:'b-teal', pending:'b-amber', reserved:'b-gray', returned:'b-red' };
+  const smapLbl   = { active:'已分配', pending:'待分配',  reserved:'预留',   returned:'申请退回' };
+  const tierBadge = { 1:'b-blue', 2:'b-cyan' };
+  const tierLbl   = { 1:'第一档', 2:'第二档' };
+
+  tbody.innerHTML = rows.map(t => {
+    const sb = smapBadge[t.status]||'b-gray', sl = smapLbl[t.status]||esc(t.status);
+    const tb = tierBadge[t.tier]||'b-gray',   tl = tierLbl[t.tier]||t.tier+'档';
+    return `<tr>
+      <td style="font-weight:500">${esc(t.tenant_name)}</td>
+      <td class="muted">${esc(t.region||'—')}</td>
+      <td><span class="badge ${tb}">${tl}</span></td>
+      <td><span class="badge ${sb}">${sl}</span></td>
+      <td>${t.cpu_total.toLocaleString()} 核</td>
+      <td>${t.mem_total.toLocaleString()} GB</td>
+      <td>${t.disk_count>0
+        ? `${t.disk_count} 块 (${t.disk_tb} TB)`
+        : '—'
+      }</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm" onclick="openEditTenant(${t.id})">编辑</button>
+        <button class="btn btn-sm" onclick="openAllocModal(${t.id})">分配</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// MODAL — 新增 / 编辑租户
+// ════════════════════════════════════════════════════════════
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+function openNewTenant() {
+  document.getElementById('mt-title').textContent = '新增租户';
+  document.getElementById('mt-id').value = '';
+  document.getElementById('mt-code').value = '';
+  document.getElementById('mt-name').value = '';
+  document.getElementById('mt-region').value = '';
+  document.getElementById('mt-tier').value = '2';
+  document.getElementById('mt-status').value = 'pending';
+  document.getElementById('mt-code').disabled = false;
+  clearFormErrors();
+  openModal('modal-tenant');
+}
+
+function openEditTenant(tid) {
+  const t = D.tenants.find(x => x.id === tid);
+  if (!t) return;
+  document.getElementById('mt-title').textContent = '编辑租户';
+  document.getElementById('mt-id').value = t.id;
+  document.getElementById('mt-code').value = t.tenant_code || '';
+  document.getElementById('mt-code').disabled = true;
+  document.getElementById('mt-name').value = t.tenant_name;
+  document.getElementById('mt-region').value = t.region || '';
+  document.getElementById('mt-tier').value = t.tier;
+  document.getElementById('mt-status').value = t.status;
+  clearFormErrors();
+  openModal('modal-tenant');
+}
+
+function clearFormErrors() {
+  document.querySelectorAll('.form-error').forEach(e => { e.textContent = ''; e.classList.remove('show'); });
+}
+
+function showFieldErr(id, msg) {
+  const el = document.getElementById(id);
+  el.textContent = msg; el.classList.add('show');
+}
+
+async function saveTenant() {
+  clearFormErrors();
+  const id = document.getElementById('mt-id').value;
+  const code = document.getElementById('mt-code').value.trim();
+  const name = document.getElementById('mt-name').value.trim();
+  const region = document.getElementById('mt-region').value.trim();
+  const tier = parseInt(document.getElementById('mt-tier').value);
+  const status = document.getElementById('mt-status').value;
+  if (!code) { showFieldErr('mt-code-err', '请填写租户编码'); return; }
+  if (!name) { showFieldErr('mt-name-err', '请填写租户名称'); return; }
+
+  try {
+    if (id) {
+      const r = await fetch(`/api/tenants/${id}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ tenant_name:name, region, tier, status })
+      });
+      if (!r.ok) { const e = await r.json(); alert(e.detail || '保存失败'); return; }
+    } else {
+      const r = await fetch('/api/tenants', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ tenant_code:code, tenant_name:name, region, tier, status })
+      });
+      if (r.status === 409) { showFieldErr('mt-code-err', '编码已存在'); return; }
+      if (!r.ok) { const e = await r.json(); alert(e.detail || '保存失败'); return; }
+    }
+    closeModal('modal-tenant');
+    await loadData();
+  } catch(e) {
+    alert('保存失败：' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// MODAL — 资源分配
+// ════════════════════════════════════════════════════════════
+let allocTenantId = null;
+
+function openAllocModal(tid) {
+  allocTenantId = tid;
+  const t = D.tenants.find(x => x.id === tid);
+  document.getElementById('ma-tenant-name').textContent = t ? t.tenant_name : '';
+  document.getElementById('ma-tenant-id').value = tid;
+  hideAllocForm();
+  renderAllocList();
+  renderDiskList();
+  openModal('modal-alloc');
+}
+
+async function renderAllocList() {
+  const tid = allocTenantId;
+  const listEl = document.getElementById('ma-cpu-list');
+  try {
+    const r = await fetch(`/api/tenants/${tid}/allocations`);
+    if (!r.ok) throw new Error();
+    let allocs = await r.json();
+    // filter out placeholder pending records with 0/0
+    allocs = allocs.filter(a => !(a.alloc_status === 'pending' && a.cpu_allocated === 0 && a.memory_allocated === 0));
+    if (!allocs.length) {
+      listEl.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:8px 0">暂无 CPU/内存分配</div>';
+      return;
+    }
+    // group by node
+    const groups = {};
+    allocs.forEach(a => {
+      const key = a.node_id;
+      if (!groups[key]) groups[key] = { node_code: a.node_code, machine_name: a.machine_name, node_id: a.node_id, items: [] };
+      groups[key].items.push(a);
+    });
+    const nodeGroups = Object.values(groups);
+    listEl.innerHTML = nodeGroups.map(g => {
+      const nodeLabel = `${g.node_code} (${g.machine_name||''})`;
+      const itemsHtml = g.items.map(a => `
+        <div style="display:flex;align-items:center;gap:10px;padding:6px 0;${g.items.indexOf(a) < g.items.length-1 ? 'border-bottom:1px solid var(--border);' : ''}">
+          <span style="flex:1;color:var(--text2)">CPU <b style="color:var(--text)">${a.cpu_allocated}</b> 核 / 内存 <b style="color:var(--text)">${a.memory_allocated}</b> GB
+            <span class="badge ${a.alloc_status==='active'?'b-teal':a.alloc_status==='pending'?'b-amber':'b-gray'}" style="margin-left:6px">${a.alloc_status==='active'?'已生效':a.alloc_status==='pending'?'待生效':a.alloc_status}</span>
+          </span>
+          <span style="display:flex;gap:4px">
+            <button class="btn btn-sm" onclick="editAlloc(${a.id},${a.cpu_allocated},${a.memory_allocated},'${a.alloc_status}',${a.node_id})">改</button>
+            <button class="btn btn-sm btn-danger" onclick="removeAlloc(${a.id})">回收</button>
+          </span>
+        </div>`).join('');
+      return `<div class="alloc-item" style="flex-direction:column;align-items:stretch">
+        <div style="font-size:12px;font-weight:500;color:var(--blue);margin-bottom:4px">${nodeLabel}</div>
+        ${itemsHtml}
+      </div>`;
+    }).join('');
+  } catch(e) {
+    listEl.innerHTML = '<div style="color:var(--red);font-size:12px;padding:8px 0">加载失败</div>';
+  }
+}
+
+async function renderDiskList() {
+  const tid = allocTenantId;
+  const listEl = document.getElementById('ma-disk-list');
+  try {
+    const r = await fetch(`/api/tenants/${tid}/disks`);
+    if (!r.ok) throw new Error();
+    const disks = await r.json();
+    if (!disks.length) {
+      listEl.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:8px 0">该租户所分配节点下暂无磁盘</div>';
+      return;
+    }
+    // group disks by node_id
+    const groups = {};
+    disks.forEach(d => {
+      const key = d.node_id;
+      if (!groups[key]) groups[key] = { node_code: d.node_code, machine_name: d.machine_name, node_id: d.node_id, disks: [] };
+      groups[key].disks.push(d);
+    });
+
+    listEl.innerHTML = Object.values(groups).map(g => {
+      const assignedDisks = g.disks.filter(d => d.assigned_to_me);
+      const unassignedDisks = g.disks.filter(d => !d.assigned_to_me);
+      const hasAssignable = unassignedDisks.length > 0;
+
+      const assignedHtml = assignedDisks.map(d => {
+        const tList = d.tenants || [];
+        const otherTenants = tList.filter(t => t.tenant_id !== tid);
+        const otherNames = otherTenants.map(t => t.tenant_name).join(', ');
+        const otherTag = otherNames ? ` <span style="color:var(--amber);font-size:11px">(共享: ${otherNames})</span>` : '';
+        return `<div class="disk-item" style="padding:5px 12px">
+          <input type="checkbox" disabled checked style="margin-right:6px;accent-color:var(--teal2)">
+          <span style="color:var(--text);min-width:52px">${d.disk_name}</span>
+          <span class="disk-info">${d.disk_size_tb} TB — <span style="color:var(--teal2)">已分配</span>${otherTag}</span>
+          <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="releaseDisk(${d.id},${tid})">回收</button>
+        </div>`;
+      }).join('');
+      const unassignedHtml = unassignedDisks.map(d => {
+        const tList = d.tenants || [];
+        const tenantNames = tList.map(t => t.tenant_name).join(', ');
+        const label = tList.length
+          ? `<span style="color:var(--amber)">${tenantNames}</span>`
+          : '<span style="color:var(--text3)">空闲</span>';
+        return `<div class="disk-item" style="padding:5px 12px">
+          <input type="checkbox" class="disk-chk" data-disk-id="${d.id}" data-node-id="${g.node_id}" style="margin-right:6px;accent-color:var(--blue)">
+          <span style="color:var(--text);min-width:52px">${d.disk_name}</span>
+          <span class="disk-info">${d.disk_size_tb} TB — ${label}</span>
+        </div>`;
+      }).join('');
+
+      return `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:8px;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg4);gap:8px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:500;color:var(--blue)">${g.node_code} (${g.machine_name||''})</span>
+          <span style="font-size:11px;color:var(--text2)">
+            ${assignedDisks.length ? `已分配 ${assignedDisks.length} 块` : ''}
+            ${unassignedDisks.length ? `${assignedDisks.length ? ' / ' : ''}可分配 ${unassignedDisks.length} 块` : ''}
+          </span>
+          ${hasAssignable ? `
+          <span style="display:flex;gap:4px;margin-left:auto">
+            <button class="btn btn-sm" onclick="toggleNodeDisks(${g.node_id},this)">全选</button>
+            <button class="btn btn-sm btn-primary" onclick="batchAssignDisks(${g.node_id})">批量分配</button>
+          </span>` : ''}
+        </div>
+        <div style="padding:4px 6px">
+          ${assignedHtml}${unassignedHtml}
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    listEl.innerHTML = '<div style="color:var(--red);font-size:12px;padding:8px 0">加载失败</div>';
+  }
+}
+
+function toggleNodeDisks(nodeId, btn) {
+  const boxes = document.querySelectorAll(`.disk-chk[data-node-id="${nodeId}"]`);
+  const allChecked = [...boxes].every(b => b.checked);
+  boxes.forEach(b => b.checked = !allChecked);
+  btn.textContent = allChecked ? '全选' : '取消';
+}
+
+async function batchAssignDisks(nodeId) {
+  const boxes = document.querySelectorAll(`.disk-chk[data-node-id="${nodeId}"]:checked`);
+  if (!boxes.length) { alert('请先勾选要分配的磁盘'); return; }
+  const diskIds = [...boxes].map(b => parseInt(b.dataset.diskId));
+  try {
+    const r = await fetch('/api/disks/batch-assign', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ disk_ids: diskIds, tenant_id: allocTenantId })
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '分配失败'); return; }
+    const result = await r.json();
+    await loadData();
+    renderDiskList();
+  } catch(e) { alert('分配失败：' + e.message); }
+}
+
+async function releaseDisk(diskId, tenantId) {
+  try {
+    const r = await fetch(`/api/disks/${diskId}/tenants/${tenantId}`, { method:'DELETE' });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '回收失败'); return; }
+    await loadData();
+    renderDiskList();
+  } catch(e) { alert('回收失败：' + e.message); }
+}
+
+// ════════════════════════════════════════════════════════════
+// MODAL — 新增服务器
+// ════════════════════════════════════════════════════════════
+async function openNewNode() {
+  document.getElementById('mn-code').value = '';
+  document.getElementById('mn-name').value = '';
+  document.getElementById('mn-series').value = 'A';
+  document.getElementById('mn-status').value = 'active';
+  document.getElementById('mn-code-err').textContent = '';
+  document.getElementById('mn-code-err').classList.remove('show');
+  hideHwForm();
+  await loadHwOptions();
+  openModal('modal-node');
+}
+
+async function loadHwOptions() {
+  const sel = document.getElementById('mn-hw');
+  try {
+    const r = await fetch('/api/hardware-configs');
+    if (!r.ok) throw new Error();
+    const configs = await r.json();
+    sel.innerHTML = configs.map(c =>
+      `<option value="${c.id}">${c.config_name} — ${c.cpu_cores}核 / ${c.memory_gb}GB</option>`
+    ).join('');
+  } catch(e) {
+    sel.innerHTML = '<option value="">加载失败</option>';
+  }
+}
+
+function showHwForm() {
+  document.getElementById('mn-hw-form').style.display = 'block';
+  document.getElementById('mn-hw-name').value = '';
+  document.getElementById('mn-hw-cpu').value = 32;
+  document.getElementById('mn-hw-mem').value = 256;
+}
+function hideHwForm() {
+  document.getElementById('mn-hw-form').style.display = 'none';
+}
+
+async function addHwConfig() {
+  const name = document.getElementById('mn-hw-name').value.trim();
+  const cpu = parseInt(document.getElementById('mn-hw-cpu').value) || 0;
+  const mem = parseInt(document.getElementById('mn-hw-mem').value) || 0;
+  if (!name) { alert('请填写配置名称'); return; }
+  try {
+    const r = await fetch('/api/hardware-configs', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ config_name:name, cpu_cores:cpu, memory_gb:mem })
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '新增失败'); return; }
+    hideHwForm();
+    await loadHwOptions();
+  } catch(e) { alert('新增失败：' + e.message); }
+}
+
+async function saveNode() {
+  const code = document.getElementById('mn-code').value.trim();
+  const name = document.getElementById('mn-name').value.trim();
+  const hwId = parseInt(document.getElementById('mn-hw').value);
+  const series = document.getElementById('mn-series').value;
+  const status = document.getElementById('mn-status').value;
+  if (!code) { showFieldErr('mn-code-err', '请填写节点编号'); return; }
+  try {
+    const r = await fetch('/api/nodes', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ node_code:code, machine_name:name, hardware_config_id:hwId, series, status })
+    });
+    if (r.status === 409) { showFieldErr('mn-code-err', '节点编号已存在'); return; }
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '保存失败'); return; }
+    closeModal('modal-node');
+    await loadData();
+  } catch(e) { alert('保存失败：' + e.message); }
+}
+
+async function deleteNode(nid, code) {
+  if (!confirm(`确认删除服务器 ${code}？将同时删除其磁盘和分配记录。`)) return;
+  try {
+    const r = await fetch(`/api/nodes/${nid}`, { method:'DELETE' });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '删除失败'); return; }
+    closeModal('modal-disk');
+    await loadData();
+  } catch(e) { alert('删除失败：' + e.message); }
+}
+
+function confirmDeleteNode() {
+  document.getElementById('md-delete-btn').style.display = 'none';
+  document.getElementById('md-delete-confirm').style.display = 'flex';
+}
+function cancelDeleteNode() {
+  document.getElementById('md-delete-btn').style.display = '';
+  document.getElementById('md-delete-confirm').style.display = 'none';
+}
+async function doDeleteNode() {
+  await deleteNode(diskNodeId, diskNodeCode);
+}
+
+// ════════════════════════════════════════════════════════════
+// MODAL — 服务器磁盘管理
+// ════════════════════════════════════════════════════════════
+let diskNodeId = null, diskNodeCode = '';
+
+function openDiskModal(nid, nodeCode, machineName) {
+  diskNodeId = nid;
+  diskNodeCode = nodeCode;
+  document.getElementById('md-node-id').value = nid;
+  document.getElementById('md-node-name').textContent = `${nodeCode} (${machineName})`;
+  document.getElementById('md-delete-btn').style.display = '';
+  document.getElementById('md-delete-confirm').style.display = 'none';
+  hideDiskForm();
+  renderDiskModalList();
+  openModal('modal-disk');
+}
+
+async function renderDiskModalList() {
+  const nid = diskNodeId;
+  const listEl = document.getElementById('md-list');
+  try {
+    const r = await fetch(`/api/nodes/${nid}/disks`);
+    if (!r.ok) throw new Error();
+    const disks = await r.json();
+    if (!disks.length) {
+      listEl.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:8px 0">暂无磁盘</div>';
+      return;
+    }
+    listEl.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:0 2px">
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2);cursor:pointer">
+          <input type="checkbox" id="md-check-all" onchange="toggleAllDiskChecks(this.checked)" style="accent-color:var(--blue)">
+          全选
+        </label>
+        <button class="btn btn-sm" onclick="showBatchResize()" id="md-batch-btn" style="display:none">批量修改大小</button>
+      </div>
+    ` + disks.map(d => {
+      const statusBadge = d.disk_status === 'normal'
+        ? '<span class="badge b-teal">正常</span>'
+        : '<span class="badge b-amber">待替换</span>';
+      const tList = d.tenants || [];
+      let tenantInfo;
+      if (!tList.length) {
+        tenantInfo = '<span style="color:var(--text3)">空闲</span>';
+      } else {
+        tenantInfo = tList.map(t =>
+          `<span style="color:var(--teal2)">${t.tenant_name}</span>`
+        ).join('<span style="color:var(--text3);margin:0 2px">,</span>');
+      }
+      return `<div class="disk-item" id="disk-row-${d.id}">
+        <input type="checkbox" class="md-disk-chk" data-disk-id="${d.id}" onchange="onDiskCheckChange()" style="accent-color:var(--blue);flex-shrink:0">
+        <span class="disk-display" style="color:var(--text);font-weight:500;min-width:52px">${d.disk_name}</span>
+        <input class="form-input disk-edit" style="display:none;width:70px;padding:2px 6px;font-size:12px" value="${d.disk_name}" id="disk-name-${d.id}">
+        <span class="disk-display" style="color:var(--text2)">${d.disk_size_tb} TB</span>
+        <input class="form-input disk-edit" type="number" min="1" style="display:none;width:60px;padding:2px 6px;font-size:12px" value="${d.disk_size_tb}" id="disk-size-${d.id}">
+        <span class="disk-edit" style="display:none;font-size:12px;color:var(--text3)">TB</span>
+        ${statusBadge}
+        <span class="disk-info">${tenantInfo}</span>
+        <span style="display:flex;gap:4px;margin-left:auto">
+          <button class="btn btn-sm disk-display" onclick="editDiskRow(${d.id})">编辑</button>
+          <button class="btn btn-sm btn-primary disk-edit" style="display:none" onclick="saveDiskRow(${d.id})">保存</button>
+          <button class="btn btn-sm disk-edit" style="display:none" onclick="cancelDiskRow(${d.id},'${d.disk_name}',${d.disk_size_tb})">取消</button>
+          <button class="btn btn-sm disk-display" onclick="toggleDiskStatus(${d.id},'${d.disk_status}')">${d.disk_status==='normal'?'标记待替换':'标记正常'}</button>
+          <button class="btn btn-sm btn-danger disk-display" onclick="deleteDisk(${d.id},'${d.disk_name}')">移除</button>
+        </span>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    listEl.innerHTML = '<div style="color:var(--red);font-size:12px;padding:8px 0">加载失败</div>';
+  }
+}
+
+function showDiskForm() {
+  document.getElementById('md-form').style.display = 'block';
+  // auto-suggest next disk name
+  const listEl = document.getElementById('md-list');
+  const existing = listEl.querySelectorAll('.disk-item').length;
+  document.getElementById('md-dname').value = `disk${existing + 1}`;
+  document.getElementById('md-dsize').value = 10;
+  document.getElementById('md-dstatus').value = 'normal';
+}
+function hideDiskForm() {
+  document.getElementById('md-form').style.display = 'none';
+}
+
+function onDiskCheckChange() {
+  const boxes = document.querySelectorAll('.md-disk-chk');
+  const checked = [...boxes].filter(b => b.checked);
+  document.getElementById('md-batch-btn').style.display = checked.length ? '' : 'none';
+  document.getElementById('md-check-all').checked = boxes.length > 0 && checked.length === boxes.length;
+}
+function toggleAllDiskChecks(checked) {
+  document.querySelectorAll('.md-disk-chk').forEach(b => b.checked = checked);
+  onDiskCheckChange();
+}
+function showBatchResize() {
+  const checked = [...document.querySelectorAll('.md-disk-chk')].filter(b => b.checked);
+  if (!checked.length) return;
+  document.getElementById('md-batch-count').textContent = checked.length;
+  document.getElementById('md-batch-size').value = '';
+  document.getElementById('md-batch-bar').style.display = 'flex';
+}
+function cancelBatchResize() {
+  document.getElementById('md-batch-bar').style.display = 'none';
+}
+async function batchResizeDisks() {
+  const checked = [...document.querySelectorAll('.md-disk-chk')].filter(b => b.checked);
+  if (!checked.length) return;
+  const newSize = parseInt(document.getElementById('md-batch-size').value);
+  if (!newSize || newSize < 1) { alert('请输入有效的磁盘大小'); return; }
+  const diskIds = checked.map(b => parseInt(b.dataset.diskId));
+  try {
+    const r = await fetch('/api/disks/batch-update', {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ disk_ids: diskIds, disk_size_tb: newSize })
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '修改失败'); return; }
+    const result = await r.json();
+    document.getElementById('md-batch-bar').style.display = 'none';
+    document.querySelectorAll('.md-disk-chk').forEach(b => b.checked = false);
+    document.getElementById('md-check-all').checked = false;
+    onDiskCheckChange();
+    await loadData();
+    renderDiskModalList();
+  } catch(e) { alert('修改失败：' + e.message); }
+}
+
+async function addDisk() {
+  const dname = document.getElementById('md-dname').value.trim();
+  const dsize = parseInt(document.getElementById('md-dsize').value) || 10;
+  const dstatus = document.getElementById('md-dstatus').value;
+  if (!dname) { alert('请填写磁盘名称'); return; }
+  try {
+    const r = await fetch(`/api/nodes/${diskNodeId}/disks`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ disk_name: dname, disk_size_tb: dsize, disk_status: dstatus })
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '新增失败'); return; }
+    hideDiskForm();
+    await loadData();
+    renderDiskModalList();
+  } catch(e) { alert('新增失败：' + e.message); }
+}
+
+function editDiskRow(diskId) {
+  const row = document.getElementById('disk-row-' + diskId);
+  row.querySelectorAll('.disk-display').forEach(el => el.style.display = 'none');
+  row.querySelectorAll('.disk-edit').forEach(el => el.style.display = '');
+}
+function cancelDiskRow(diskId, origName, origSize) {
+  document.getElementById('disk-name-' + diskId).value = origName;
+  document.getElementById('disk-size-' + diskId).value = origSize;
+  const row = document.getElementById('disk-row-' + diskId);
+  row.querySelectorAll('.disk-edit').forEach(el => el.style.display = 'none');
+  row.querySelectorAll('.disk-display').forEach(el => el.style.display = '');
+}
+async function saveDiskRow(diskId) {
+  const newName = document.getElementById('disk-name-' + diskId).value.trim();
+  const newSize = parseInt(document.getElementById('disk-size-' + diskId).value) || 1;
+  if (!newName) { alert('磁盘名称不能为空'); return; }
+  try {
+    const r = await fetch(`/api/disks/${diskId}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ disk_name: newName, disk_size_tb: newSize })
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '修改失败'); return; }
+    await loadData();
+    renderDiskModalList();
+  } catch(e) { alert('修改失败：' + e.message); }
+}
+
+async function toggleDiskStatus(diskId, curStatus) {
+  const newStatus = curStatus === 'normal' ? 'replace' : 'normal';
+  try {
+    const r = await fetch(`/api/disks/${diskId}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ disk_status: newStatus })
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '修改失败'); return; }
+    await loadData();
+    renderDiskModalList();
+  } catch(e) { alert('修改失败：' + e.message); }
+}
+
+async function deleteDisk(diskId, diskName) {
+  if (!confirm(`确认移除磁盘 ${diskName}？`)) return;
+  try {
+    const r = await fetch(`/api/disks/${diskId}`, { method:'DELETE' });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '移除失败'); return; }
+    await loadData();
+    renderDiskModalList();
+  } catch(e) { alert('移除失败：' + e.message); }
+}
+
+// ── alloc form ──
+let editAllocId = null;
+
+function showAllocForm() {
+  editAllocId = null;
+  document.getElementById('ma-form').style.display = 'block';
+  populateNodeSelect();
+}
+function hideAllocForm() {
+  document.getElementById('ma-form').style.display = 'none';
+  document.getElementById('ma-node').disabled = false;
+  editAllocId = null;
+}
+
+function populateNodeSelect() {
+  const sel = document.getElementById('ma-node');
+  sel.innerHTML = '<option value="">请选择服务器</option>' +
+    D.nodes.filter(n => n.status === 'active').map(n =>
+      `<option value="${n.id}">${n.machine_name||'未命名'} (${n.node_code}) — CPU ${n.cpu_cores}核 / ${n.memory_gb}G</option>`
+    ).join('');
+  document.getElementById('ma-cpu').value = 0;
+  document.getElementById('ma-mem').value = 0;
+  document.getElementById('ma-cpu-hint').textContent = '';
+  document.getElementById('ma-mem-hint').textContent = '';
+}
+
+function onNodeSelect() {
+  const nid = parseInt(document.getElementById('ma-node').value);
+  if (!nid) { document.getElementById('ma-cpu-hint').textContent = ''; document.getElementById('ma-mem-hint').textContent = ''; return; }
+  const n = D.nodes.find(x => x.id === nid);
+  if (!n) return;
+  const cpuAvail = n.cpu_cores - n.cpu_used;
+  const memAvail = n.memory_gb - n.mem_used;
+  document.getElementById('ma-cpu-hint').textContent = `可用 ${cpuAvail} / 总 ${n.cpu_cores} 核`;
+  document.getElementById('ma-mem-hint').textContent = `可用 ${memAvail} / 总 ${n.memory_gb} GB`;
+}
+
+async function addAllocation() {
+  const nid = parseInt(document.getElementById('ma-node').value);
+  const cpu = parseInt(document.getElementById('ma-cpu').value) || 0;
+  const mem = parseInt(document.getElementById('ma-mem').value) || 0;
+  if (!nid) { alert('请选择节点'); return; }
+  try {
+    let r;
+    if (editAllocId) {
+      r = await fetch(`/api/allocations/${editAllocId}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ cpu_allocated:cpu, memory_allocated:mem })
+      });
+    } else {
+      r = await fetch('/api/allocations', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ node_id:nid, tenant_id:allocTenantId, cpu_allocated:cpu, memory_allocated:mem })
+      });
+    }
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '操作失败'); return; }
+    hideAllocForm();
+    await loadData();
+    renderAllocList();
+    renderDiskList();
+  } catch(e) {
+    alert('操作失败：' + e.message);
+  }
+}
+
+function editAlloc(allocId, curCpu, curMem, curStatus, nodeId) {
+  editAllocId = allocId;
+  document.getElementById('ma-form').style.display = 'block';
+  populateNodeSelect();
+  document.getElementById('ma-node').value = nodeId;
+  document.getElementById('ma-node').disabled = true;
+  document.getElementById('ma-cpu').value = curCpu;
+  document.getElementById('ma-mem').value = curMem;
+  onNodeSelect();
+}
+
+async function removeAlloc(allocId) {
+  if (!confirm('确认回收此分配？')) return;
+  try {
+    const r = await fetch(`/api/allocations/${allocId}`, { method:'DELETE' });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '回收失败'); return; }
+    await loadData();
+    renderAllocList();
+    renderDiskList();
+  } catch(e) {
+    alert('回收失败：' + e.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// PAGE 4 — 模板
+// ════════════════════════════════════════════════════════════
+let templateCache = [];
+
+async function renderTemplates() {
+  const tbody = document.getElementById('tp-tbody');
+  try {
+    const r = await fetch('/api/component-templates');
+    if (!r.ok) throw new Error();
+    templateCache = await r.json();
+    if (!templateCache.length) { tbody.innerHTML = emptyRow(4); return; }
+    tbody.innerHTML = templateCache.map(t => `
+      <tr>
+        <td style="font-weight:500;color:var(--blue)">${esc(t.name)}</td>
+        <td class="muted">${esc(t.description||'—')}</td>
+        <td>${(t.roles||[]).map(r=>`<span class="badge b-purple" style="margin:1px 2px">${esc(r)}</span>`).join('')||'<span style="color:var(--text3)">—</span>'}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-sm" onclick="openEditTemplate(${t.id})">编辑</button>
+          <button class="btn btn-sm btn-danger" onclick="deleteTemplate(${t.id},'${esc(t.name)}')">删除</button>
+        </td>
+      </tr>`).join('');
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--red)">加载失败</td></tr>';
+  }
+}
+
+function openNewTemplate() {
+  document.getElementById('mtp-title').textContent = '新增组件模板';
+  document.getElementById('mtp-id').value = '';
+  document.getElementById('mtp-name').value = '';
+  document.getElementById('mtp-desc').value = '';
+  document.getElementById('mtp-roles').value = '';
+  openModal('modal-template');
+}
+
+function openEditTemplate(tid) {
+  const t = templateCache.find(x => x.id === tid);
+  if (!t) return;
+  document.getElementById('mtp-title').textContent = '编辑组件模板';
+  document.getElementById('mtp-id').value = t.id;
+  document.getElementById('mtp-name').value = t.name;
+  document.getElementById('mtp-desc').value = t.description || '';
+  document.getElementById('mtp-roles').value = (t.roles||[]).join('\n');
+  openModal('modal-template');
+}
+
+async function saveTemplate() {
+  const id = document.getElementById('mtp-id').value;
+  const name = document.getElementById('mtp-name').value.trim();
+  const desc = document.getElementById('mtp-desc').value.trim();
+  const roles = document.getElementById('mtp-roles').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if (!name) { alert('请填写组件名称'); return; }
+  try {
+    const r = id
+      ? await fetch(`/api/component-templates/${id}`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ name, description:desc, roles })
+        })
+      : await fetch('/api/component-templates', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ name, description:desc, roles })
+        });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '保存失败'); return; }
+    closeModal('modal-template');
+    await loadData();
+  } catch(e) { alert('保存失败：' + e.message); }
+}
+
+async function deleteTemplate(tid, name) {
+  if (!confirm(`确认删除模板「${name}」？`)) return;
+  try {
+    const r = await fetch(`/api/component-templates/${tid}`, { method:'DELETE' });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '删除失败'); return; }
+    await loadData();
+  } catch(e) { alert('删除失败：' + e.message); }
+}
+
+// ════════════════════════════════════════════════════════════
+// PAGE 5 — 可视面板
+// ════════════════════════════════════════════════════════════
+let vizTab = 'component';
+
+function switchVizTab(tab) {
+  vizTab = tab;
+  document.getElementById('viz-tab-comp').classList.toggle('active', tab==='component');
+  document.getElementById('viz-tab-node').classList.toggle('active', tab==='node');
+  document.getElementById('viz-component').style.display = tab==='component' ? '' : 'none';
+  document.getElementById('viz-node').style.display = tab==='node' ? '' : 'none';
+}
+
+function populateVizDropdowns() {
+  if (!D) return;
+  // tenant dropdown
+  const tSel = document.getElementById('viz-tenant');
+  const tVal = tSel.value;
+  tSel.innerHTML = '<option value="">选择租户</option>' +
+    D.tenants.map(t => `<option value="${t.id}">${esc(t.tenant_name)}</option>`).join('');
+  tSel.value = tVal;
+  // node dropdown
+  const nSel = document.getElementById('viz-node-sel');
+  const nVal = nSel.value;
+  nSel.innerHTML = '<option value="">选择服务器</option>' +
+    D.nodes.map(n => `<option value="${n.id}">${n.node_code} (${n.machine_name||''}) — ${n.cpu_cores}核/${n.memory_gb}G</option>`).join('');
+  nSel.value = nVal;
+}
+
+async function loadComponentView() {
+  const tid = parseInt(document.getElementById('viz-tenant').value);
+  const box = document.getElementById('viz-comp-content');
+  if (!tid) { box.innerHTML = '<div class="viz-empty">请选择租户</div>'; return; }
+  try {
+    const [compR, allocR] = await Promise.all([
+      fetch(`/api/tenants/${tid}/components`).then(r => r.ok ? r.json() : []),
+      fetch(`/api/visualization/component-view?tenant_id=${tid}`).then(r => r.ok ? r.json() : [])
+    ]);
+    if (!compR.length) { box.innerHTML = '<div class="viz-empty">该租户暂无组件实例</div>'; return; }
+
+    // build component -> role allocations map
+    const tcMap = {};
+    allocR.forEach(a => {
+      if (!tcMap[a.tc_id]) tcMap[a.tc_id] = [];
+      tcMap[a.tc_id].push(a);
+    });
+
+    box.innerHTML = compR.map(c => {
+      const allocs = tcMap[c.id] || [];
+      const summary = c.total_cpu ? `CPU ${c.total_cpu} 核 / 内存 ${c.total_memory} GB` : '暂无分配';
+      const rolesHtml = allocs.length ? allocs.map(a => `
+        <div class="viz-role">
+          <span class="viz-role-name">${esc(a.role_name)}</span>
+          <span class="viz-role-seq">#${a.role_seq}</span>
+          <span class="viz-role-node">${esc(a.node_code)} (${esc(a.machine_name||'')})</span>
+          <span class="viz-role-res">CPU <b>${a.cpu}</b> / 内存 <b>${a.memory}</b> GB
+            <span class="badge ${a.status==='active'?'b-teal':'b-amber'}" style="margin-left:4px">${a.status==='active'?'生效':'待生效'}</span>
+          </span>
+          <span class="viz-role-actions">
+            <button class="btn btn-sm" onclick="editRoleAlloc(${a.alloc_id})">改</button>
+            <button class="btn btn-sm btn-danger" onclick="removeRoleAlloc(${a.alloc_id})">删</button>
+          </span>
+        </div>`).join('') : '<div style="color:var(--text3);font-size:12px;padding:4px 0">暂无角色分配</div>';
+
+      return `<div class="viz-comp">
+        <div class="viz-comp-head">
+          <span class="viz-comp-name">${esc(c.component_name)} ${c.instance_label ? '· '+esc(c.instance_label) : ''}</span>
+          <span class="viz-comp-summary">${summary}</span>
+          <span class="viz-comp-actions">
+            <button class="btn btn-sm btn-primary" onclick="openNewRoleAlloc(${c.id})">+ 角色</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteComponent(${c.id},'${esc(c.component_name)}')">删除</button>
+          </span>
+        </div>
+        <div class="viz-role-list">${rolesHtml}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    box.innerHTML = '<div class="viz-empty" style="color:var(--red)">加载失败</div>';
+  }
+}
+
+async function loadNodeView() {
+  const nid = parseInt(document.getElementById('viz-node-sel').value);
+  const box = document.getElementById('viz-node-content');
+  if (!nid) { box.innerHTML = '<div class="viz-empty">请选择服务器</div>'; return; }
+  try {
+    const [allocR, sumR] = await Promise.all([
+      fetch(`/api/visualization/node-view?node_id=${nid}`).then(r => r.ok ? r.json() : []),
+      fetch('/api/visualization/node-summary').then(r => r.ok ? r.json() : [])
+    ]);
+    const ns = sumR.find(n => n.id === nid);
+    if (!ns) { box.innerHTML = '<div class="viz-empty">未找到服务器信息</div>'; return; }
+
+    const cpuPct = pct(ns.role_cpu_used, ns.cpu_cores);
+    const memPct = pct(ns.role_mem_used, ns.memory_gb);
+
+    let rolesHtml = '';
+    if (allocR.length) {
+      // group by tenant_component
+      const tcGroups = {};
+      allocR.forEach(a => {
+        const key = `${a.tc_id}_${a.tenant_name}_${a.component_name}_${a.instance_label}`;
+        if (!tcGroups[key]) tcGroups[key] = { tenant: a.tenant_name, comp: a.component_name, label: a.instance_label, items: [] };
+        tcGroups[key].items.push(a);
+      });
+      rolesHtml = Object.values(tcGroups).map(g => `
+        <div style="margin-bottom:8px">
+          <div style="font-size:12px;color:var(--purple);font-weight:500;margin-bottom:4px">${esc(g.tenant)} / ${esc(g.comp)} ${g.label?'· '+esc(g.label):''}</div>
+          ${g.items.map(a => `
+            <div class="viz-role">
+              <span class="viz-role-name">${esc(a.role_name)}</span>
+              <span class="viz-role-seq">#${a.role_seq}</span>
+              <span class="viz-role-res">CPU <b>${a.cpu}</b> / 内存 <b>${a.memory}</b> GB
+                <span class="badge ${a.status==='active'?'b-teal':'b-amber'}" style="margin-left:4px">${a.status==='active'?'生效':'待生效'}</span>
+              </span>
+              <span class="viz-role-actions">
+                <button class="btn btn-sm" onclick="editRoleAlloc(${a.alloc_id})">改</button>
+                <button class="btn btn-sm btn-danger" onclick="removeRoleAlloc(${a.alloc_id})">删</button>
+              </span>
+            </div>`).join('')}
+        </div>`).join('');
+    } else {
+      rolesHtml = '<div style="color:var(--text3);font-size:12px">该服务器暂无角色分配</div>';
+    }
+
+    box.innerHTML = `<div class="viz-node-card">
+      <div class="viz-node-head">
+        <span class="viz-node-code">${esc(ns.node_code)}</span>
+        <span class="viz-node-cap">总 ${ns.cpu_cores} 核 / ${ns.memory_gb} GB</span>
+      </div>
+      <div style="display:flex;gap:16px;font-size:11px;color:var(--text2);margin-bottom:4px">
+        <span>CPU 已用 <b style="color:var(--text)">${ns.role_cpu_used}</b> 核 (${cpuPct}%)</span>
+        <span>内存已用 <b style="color:var(--text)">${ns.role_mem_used}</b> GB (${memPct}%)</span>
+      </div>
+      <div class="viz-node-bar"><div class="viz-node-bar-fill" style="width:${cpuPct}%"></div></div>
+      <div class="viz-node-roles">${rolesHtml}</div>
+    </div>`;
+  } catch(e) {
+    box.innerHTML = '<div class="viz-empty" style="color:var(--red)">加载失败</div>';
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// MODAL — 新增组件实例
+// ════════════════════════════════════════════════════════════
+function openNewComponent() {
+  const tid = parseInt(document.getElementById('viz-tenant').value);
+  if (!tid) { alert('请先选择租户'); return; }
+  document.getElementById('mc-tenant-id').value = tid;
+  document.getElementById('mc-name').value = '';
+  document.getElementById('mc-label').value = '1';
+  document.getElementById('mc-template').value = '';
+  populateTemplateDropdown();
+  openModal('modal-comp');
+}
+
+function populateTemplateDropdown() {
+  const sel = document.getElementById('mc-template');
+  sel.innerHTML = '<option value="">手动填写</option>' +
+    (templateCache.length ? templateCache.map(t =>
+      `<option value="${t.id}">${esc(t.name)} (${(t.roles||[]).length} 角色)</option>`
+    ).join('') : '<option value="" disabled>暂无模板</option>');
+}
+
+function onTemplateSelect() {
+  const tid = parseInt(document.getElementById('mc-template').value);
+  if (!tid) return;
+  const t = templateCache.find(x => x.id === tid);
+  if (t) {
+    document.getElementById('mc-name').value = t.name;
+  }
+}
+
+async function saveComponent() {
+  const tid = parseInt(document.getElementById('mc-tenant-id').value);
+  const templateId = parseInt(document.getElementById('mc-template').value) || null;
+  const name = document.getElementById('mc-name').value.trim();
+  const label = document.getElementById('mc-label').value.trim() || '1';
+  if (!name) { alert('请填写组件名称'); return; }
+  try {
+    const r = await fetch(`/api/tenants/${tid}/components`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ component_id: templateId, component_name: name, instance_label: label })
+    });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '新增失败'); return; }
+    closeModal('modal-comp');
+    await loadData();
+    loadComponentView();
+  } catch(e) { alert('新增失败：' + e.message); }
+}
+
+async function deleteComponent(tcId, name) {
+  if (!confirm(`确认删除组件「${name}」？其下所有角色分配将一并删除。`)) return;
+  try {
+    const r = await fetch(`/api/tenant-components/${tcId}`, { method:'DELETE' });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '删除失败'); return; }
+    await loadData();
+    loadComponentView();
+  } catch(e) { alert('删除失败：' + e.message); }
+}
+
+// ════════════════════════════════════════════════════════════
+// MODAL — 新增 / 编辑角色分配
+// ════════════════════════════════════════════════════════════
+let roleAllocTcId = null;
+
+function openNewRoleAlloc(tcId) {
+  roleAllocTcId = tcId;
+  document.getElementById('mra-tc-id').value = tcId;
+  document.getElementById('mra-edit-id').value = '';
+  document.getElementById('mra-role-sel').value = '';
+  document.getElementById('mra-role-name').value = '';
+  document.getElementById('mra-seq').value = 1;
+  document.getElementById('mra-cpu').value = 0;
+  document.getElementById('mra-mem').value = 0;
+  document.getElementById('mra-cpu-hint').textContent = '';
+  document.getElementById('mra-mem-hint').textContent = '';
+  document.querySelector('#modal-role-alloc .modal-title').textContent = '新增角色分配';
+  populateRoleSelect(tcId);
+  populateRANodeSelect();
+  openModal('modal-role-alloc');
+}
+
+function populateRoleSelect(tcId) {
+  const sel = document.getElementById('mra-role-sel');
+  // find the component to get its template roles
+  const tid = parseInt(document.getElementById('viz-tenant').value);
+  // try to match via templateCache
+  let roles = [];
+  // find tenant component info from the DOM or re-derive
+  // we fetch tenant components to get the component_id
+  sel.innerHTML = '<option value="">选择角色</option>';
+  fetch(`/api/tenants/${tid}/components`).then(r => r.json()).then(comps => {
+    const comp = comps.find(c => c.id === tcId);
+    if (comp && comp.component_id) {
+      const tmpl = templateCache.find(t => t.id === comp.component_id);
+      if (tmpl && tmpl.roles) roles = tmpl.roles;
+    }
+    if (roles.length) {
+      sel.innerHTML += roles.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
+    }
+  }).catch(() => {});
+}
+
+function onRoleSelect() {
+  const val = document.getElementById('mra-role-sel').value;
+  if (val) document.getElementById('mra-role-name').value = val;
+}
+
+function populateRANodeSelect() {
+  const sel = document.getElementById('mra-node');
+  sel.innerHTML = '<option value="">请选择服务器</option>' +
+    D.nodes.filter(n => n.status === 'active').map(n =>
+      `<option value="${n.id}">${n.node_code} (${n.machine_name||''}) — ${n.cpu_cores}核/${n.memory_gb}G</option>`
+    ).join('');
+}
+
+function onRANodeSelect() {
+  const nid = parseInt(document.getElementById('mra-node').value);
+  if (!nid) { document.getElementById('mra-cpu-hint').textContent = ''; document.getElementById('mra-mem-hint').textContent = ''; return; }
+  const n = D.nodes.find(x => x.id === nid);
+  if (!n) return;
+  document.getElementById('mra-cpu-hint').textContent = `可用 ${n.cpu_cores - n.cpu_used} / 总 ${n.cpu_cores} 核`;
+  document.getElementById('mra-mem-hint').textContent = `可用 ${n.memory_gb - n.mem_used} / 总 ${n.memory_gb} GB`;
+}
+
+function editRoleAlloc(allocId) {
+  // fetch the allocation data to populate the form
+  const tid = parseInt(document.getElementById('viz-tenant').value);
+  fetch(`/api/visualization/component-view?tenant_id=${tid}`).then(r => r.json()).then(rows => {
+    const a = rows.find(r => r.alloc_id === allocId);
+    if (!a) return;
+    roleAllocTcId = a.tc_id;
+    document.getElementById('mra-tc-id').value = a.tc_id;
+    document.getElementById('mra-edit-id').value = allocId;
+    document.getElementById('mra-role-sel').value = '';
+    document.getElementById('mra-role-name').value = a.role_name;
+    document.getElementById('mra-seq').value = a.role_seq;
+    document.getElementById('mra-cpu').value = a.cpu;
+    document.getElementById('mra-mem').value = a.memory;
+    document.querySelector('#modal-role-alloc .modal-title').textContent = '编辑角色分配';
+    populateRANodeSelect();
+    // set node after options are populated
+    setTimeout(() => {
+      document.getElementById('mra-node').value = a.node_id;
+      onRANodeSelect();
+    }, 0);
+    populateRoleSelect(a.tc_id);
+    openModal('modal-role-alloc');
+  }).catch(e => alert('加载失败'));
+}
+
+async function saveRoleAlloc() {
+  const editId = document.getElementById('mra-edit-id').value;
+  const tcId = parseInt(document.getElementById('mra-tc-id').value);
+  const roleName = document.getElementById('mra-role-name').value.trim();
+  const seq = parseInt(document.getElementById('mra-seq').value) || 1;
+  const nid = parseInt(document.getElementById('mra-node').value);
+  const cpu = parseInt(document.getElementById('mra-cpu').value) || 0;
+  const mem = parseInt(document.getElementById('mra-mem').value) || 0;
+  if (!roleName) { alert('请填写角色名称'); return; }
+  if (!nid) { alert('请选择服务器'); return; }
+  try {
+    const r = editId
+      ? await fetch(`/api/role-allocations/${editId}`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ role_name: roleName, role_seq: seq, node_id: nid, cpu, memory: mem })
+        })
+      : await fetch('/api/role-allocations', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ tenant_component_id: tcId, role_name: roleName, role_seq: seq, node_id: nid, cpu, memory: mem })
+        });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '保存失败'); return; }
+    closeModal('modal-role-alloc');
+    await loadData();
+    if (vizTab === 'component') loadComponentView();
+    else loadNodeView();
+  } catch(e) { alert('保存失败：' + e.message); }
+}
+
+async function removeRoleAlloc(allocId) {
+  if (!confirm('确认删除此角色分配？')) return;
+  try {
+    const r = await fetch(`/api/role-allocations/${allocId}`, { method:'DELETE' });
+    if (!r.ok) { const e = await r.json(); alert(e.detail || '删除失败'); return; }
+    await loadData();
+    if (vizTab === 'component') loadComponentView();
+    else loadNodeView();
+  } catch(e) { alert('删除失败：' + e.message); }
+}
+
+// ── utils ─────────────────────────────────────────────────
+function pct(u,t){ return t ? Math.round(Math.min(100, u/t*100)) : 0; }
+function barColor(p){ return p>=90?'#f85149':p>=70?'#e3b341':'#58a6ff'; }
+function esc(s){ if(!s) return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function setText(id,v){ document.getElementById(id).textContent = v; }
+function emptyRow(cols){ return `<tr><td colspan="${cols}" style="text-align:center;color:var(--text3);padding:28px">暂无数据</td></tr>`; }
+function killCharts(){ Object.values(charts).forEach(c=>{try{c.destroy()}catch(e){}}); charts={}; }
+function showLoad(v){ const el=document.getElementById('loading'); v?el.classList.remove('hide'):setTimeout(()=>el.classList.add('hide'),200); }
+function showErr(m){ const el=document.getElementById('errBar'); el.textContent=m; el.classList.add('show'); }
+function hideErr(){ document.getElementById('errBar').classList.remove('show'); }
+function setStatus(ok){
+  const d=document.getElementById('dot'), t=document.getElementById('stxt');
+  d.className='dot'+(ok?'':' err');
+  t.textContent=ok?'数据已加载':'连接失败';
+}
+</script>
+</body>
+</html>
